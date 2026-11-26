@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>本地事件总线与消费者协调器</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="title-block">
+        <p class="eyebrow">LOCAL SYSTEMS LAB · AT-LEAST-ONCE DELIVERY</p>
+        <h1>本地事件总线与消费者协调器</h1>
+        <p class="subtitle">
+          失联转交 · Generation Fence · 检查点单调提交 · 幂等键重投去重
+        </p>
+      </div>
+      <div class="top-actions">
+        <span id="connectionBadge" class="badge neutral">连接中…</span>
+        <button id="resetButton" class="btn ghost" type="button">重置演示</button>
+      </div>
+    </header>
+
+    <main class="page">
+      <section class="hero-grid">
+        <article class="card guided-card">
+          <div class="card-head">
+            <div>
+              <p class="section-kicker">GUIDED REBALANCE</p>
+              <h2>单步推进重平衡</h2>
+            </div>
+            <div class="head-actions">
+              <button id="stopConsumerButton" class="btn danger" type="button">
+                让 consumer-1 停止回应
+              </button>
+              <button id="stepButton" class="btn primary" type="button" disabled>
+                下一步
+              </button>
+            </div>
+          </div>
+
+          <div class="stat-row" id="statRow"></div>
+          <div id="actionNotice" class="notice" role="status" aria-live="polite"></div>
+
+          <ol id="stepList" class="stepper"></ol>
+        </article>
+
+        <article class="card cluster-card">
+          <div class="card-head compact">
+            <div>
+              <p class="section-kicker">CONSUMER GROUP</p>
+              <h2 id="groupTitle">order-processors</h2>
+            </div>
+            <span id="generationBadge" class="badge blue">generation 1</span>
+          </div>
+          <div id="consumerList" class="consumer-list"></div>
+          <h3 class="subhead">分区所有权</h3>
+          <div id="partitionOwnership" class="ownership-grid"></div>
+          <p class="hint">
+            协调器心跳超时为 <strong>10 秒虚拟时间</strong>。停止回应不会立即杀死旧进程，因此可刻意展示重叠执行与僵尸提交。
+          </p>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="card bus-card">
+          <div class="card-head">
+            <div>
+              <p class="section-kicker">PARTITIONED EVENT LOG</p>
+              <h2>事件总线与检查点</h2>
+            </div>
+            <div class="inline-actions">
+              <label class="select-label">
+                分区
+                <select id="partitionSelect" aria-label="选择分区">
+                  <option value="0">orders-0</option>
+                  <option value="1">orders-1</option>
+                  <option value="2">orders-2</option>
+                </select>
+              </label>
+              <button id="produceButton" class="btn ghost small" type="button">生产事件</button>
+              <button id="processButton" class="btn primary small" type="button">处理下一条并提交</button>
+              <button id="lostAckButton" class="btn warning small" type="button">处理下一条但丢失确认</button>
+            </div>
+          </div>
+          <div id="partitionSummary" class="partition-summary"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Offset</th>
+                  <th>Event / Order</th>
+                  <th>金额</th>
+                  <th>检查点状态</th>
+                  <th>投递/幂等</th>
+                </tr>
+              </thead>
+              <tbody id="eventTableBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card delivery-card">
+          <div class="card-head compact">
+            <div>
+              <p class="section-kicker">DELIVERY ATTEMPTS</p>
+              <h2>确认丢失与重投</h2>
+            </div>
+            <span id="deliveryCountBadge" class="badge neutral">0 条投递</span>
+          </div>
+          <div id="retryBanner"></div>
+          <div id="deliveryList" class="delivery-list"></div>
+        </article>
+      </section>
+
+      <section class="bottom-grid">
+        <article class="card external-card">
+          <div class="card-head compact">
+            <div>
+              <p class="section-kicker">LOCAL EXTERNAL SERVICE · :8091</p>
+              <h2>幂等处理服务账本</h2>
+            </div>
+            <div id="externalStats" class="mini-stats"></div>
+          </div>
+          <p class="hint">
+            服务以 <code>idem:topic:partition:offset</code> 为幂等键；同一键的第二次请求直接返回缓存结果，不再次扣款/履约。
+          </p>
+          <div class="table-wrap ledger-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>幂等键</th>
+                  <th>Order</th>
+                  <th>真实执行</th>
+                  <th>去重命中</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="ledgerTableBody"></tbody>
+            </table>
+          </div>
+          <h3 class="subhead">副作用序列</h3>
+          <div id="sideEffectList" class="side-effects"></div>
+        </article>
+
+        <article class="card observability-card">
+          <div class="tabs" role="tablist" aria-label="审计与日志">
+            <button class="tab active" id="auditTabButton" type="button" role="tab">检查点提交审计</button>
+            <button class="tab" id="logTabButton" type="button" role="tab">系统事件流</button>
+          </div>
+          <div id="auditPanel" class="tab-panel">
+            <div class="table-wrap audit-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>结果</th>
+                    <th>分区/Offset</th>
+                    <th>调用者</th>
+                    <th>原因与检查点</th>
+                  </tr>
+                </thead>
+                <tbody id="auditTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="logPanel" class="tab-panel hidden">
+            <div id="logList" class="log-list"></div>
+          </div>
+
+          <div id="invariantPanel" class="invariant-panel"></div>
+        </article>
+      </section>
+
+      <footer class="footer">
+        <span>纯 Python 标准库实现，无外部依赖。</span>
+        <span>UI/API <code>:8080</code> · 幂等 HTTP 服务 <code>:8091</code> · 所有状态均在本地内存中。</span>
+      </footer>
+    </main>
+
+    <div id="toast" class="toast hidden" role="alert"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
